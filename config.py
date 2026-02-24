@@ -78,8 +78,9 @@ def load_config() -> Config:
         target_channel_id=int(opt("TARGET_CHANNEL_ID", "0") or "0"),
         tmdb_api_key=opt("TMDB_API_KEY"),
         omdb_api_key=opt("OMDB_API_KEY"),
-        channel_username=opt("CHANNEL_USERNAME", "@YourChannel"),
-        channel_link=opt("CHANNEL_LINK", "https://t.me/YourChannel"),
+        channel_username=opt("CHANNEL_USERNAME", "@THEUPDATEDGUYS"),
+        channel_link=opt("CHANNEL_LINK", "https://t.me/THEUPDATEDGUYS"),
         api_timeout=int(opt("API_TIMEOUT", "10")),
         db_path=opt("DB_PATH", "bot_state.db"),
+
     )
