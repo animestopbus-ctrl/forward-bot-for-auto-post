@@ -1,0 +1,15 @@
+# ── Telegram Bot Framework ─────────────────────────────────────────────────
+# [job-queue] pulls in APScheduler for the interval scheduler
+python-telegram-bot[job-queue]==21.6
+
+# ── Filename parsing ────────────────────────────────────────────────────────
+guessit==3.8.0
+
+# ── Async HTTP (for all 6 free API calls) ───────────────────────────────────
+aiohttp==3.9.5
+
+# ── Environment variable loading ────────────────────────────────────────────
+python-dotenv==1.0.1
+
+# ── (Optional) faster JSON parsing ─────────────────────────────────────────
+# aiohttp[speedups]
