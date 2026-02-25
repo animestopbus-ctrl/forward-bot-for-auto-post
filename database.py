@@ -53,6 +53,10 @@ class Database:
                 CREATE TABLE IF NOT EXISTS admins (
                     user_id INTEGER PRIMARY KEY
                 );
+
+                CREATE TABLE IF NOT EXISTS filters (
+                    keyword TEXT PRIMARY KEY
+                );
             """)
             self._conn.commit()
 
