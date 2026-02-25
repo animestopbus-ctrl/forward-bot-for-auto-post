@@ -42,18 +42,37 @@ def _extract_media(msg: Message) -> tuple[str, str, int | None, str] | None:
     Pull (file_id, filename, file_size, media_kind) from any media message.
     Returns None if the message has no supported media.
     """
+    caption_hint = ""
+    if getattr(msg, "caption", None):
+        caption_hint = msg.caption.split('\n')[0].strip()
+        # Remove any unwanted characters from caption_hint to make it a generic filename
+        import re
+        caption_hint = re.sub(r'[\\/*?:"<>|]', "", caption_hint)[:60]
+
     if msg.video:
         v = msg.video
-        return v.file_id, v.file_name or f"video_{v.file_unique_id}.mp4", v.file_size, "video"
+        fn = getattr(v, "file_name", "") or ""
+        if not fn or fn.startswith("video_") or "unknown" in fn.lower():
+            fn = (caption_hint + ".mp4") if caption_hint else f"video_{v.file_unique_id}.mp4"
+        return v.file_id, fn, v.file_size, "video"
     if msg.document:
         d = msg.document
-        return d.file_id, d.file_name or f"doc_{d.file_unique_id}", d.file_size, "document"
+        fn = getattr(d, "file_name", "") or ""
+        if not fn or fn.startswith("doc_") or "unknown" in fn.lower():
+            fn = (caption_hint + ".mkv") if caption_hint else f"doc_{d.file_unique_id}"
+        return d.file_id, fn, d.file_size, "document"
     if msg.audio:
         a = msg.audio
-        return a.file_id, a.file_name or f"audio_{a.file_unique_id}.mp3", a.file_size, "audio"
+        fn = getattr(a, "file_name", "") or ""
+        if not fn or fn.startswith("audio_"):
+            fn = (caption_hint + ".mp3") if caption_hint else f"audio_{a.file_unique_id}.mp3"
+        return a.file_id, fn, a.file_size, "audio"
     if msg.animation:
         an = msg.animation
-        return an.file_id, an.file_name or f"anim_{an.file_unique_id}.gif", an.file_size, "animation"
+        fn = getattr(an, "file_name", "") or ""
+        if not fn or fn.startswith("anim_"):
+            fn = (caption_hint + ".gif") if caption_hint else f"anim_{an.file_unique_id}.gif"
+        return an.file_id, fn, an.file_size, "animation"
     return None
 
 
