@@ -338,14 +338,24 @@ async def cmd_setsource(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     db: Database = context.bot_data["db"]
     msg = update.message
 
-    # Case 1: message is forwarded from a channel
-    if msg.forward_from_chat:
+    # Case 1: message is forwarded from a channel (PTB v21+ uses forward_origin)
+    chat_id = None
+    if hasattr(msg, "forward_origin") and msg.forward_origin:
+        if getattr(msg.forward_origin, "chat", None):
+            chat_id = msg.forward_origin.chat.id
+    elif getattr(msg, "forward_from_chat", None):
         chat_id = msg.forward_from_chat.id
+
+    if chat_id:
         db.set("source_channel_id", chat_id)
         await msg.reply_text(
             f"✅ Source channel set to <code>{chat_id}</code>",
             parse_mode=ParseMode.HTML,
         )
+        return
+
+    if getattr(msg, "forward_date", None) or getattr(msg, "forward_origin", None):
+        await msg.reply_text("❌ Could not read the source channel. Channel ID is hidden due to privacy settings. Try pasting the ID/link.")
         return
 
     # Case 2: user typed an ID or t.me link
@@ -399,8 +409,14 @@ async def cmd_settarget(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     db: Database = context.bot_data["db"]
     msg = update.message
 
-    if msg.forward_from_chat:
+    chat_id = None
+    if hasattr(msg, "forward_origin") and msg.forward_origin:
+        if getattr(msg.forward_origin, "chat", None):
+            chat_id = msg.forward_origin.chat.id
+    elif getattr(msg, "forward_from_chat", None):
         chat_id = msg.forward_from_chat.id
+
+    if chat_id:
         db.set("target_channel_id", chat_id)
         await msg.reply_text(
             f"✅ Target channel set to <code>{chat_id}</code>",
@@ -450,10 +466,20 @@ async def cmd_setstart(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     db: Database = context.bot_data["db"]
     msg = update.message
 
-    # Case 1: forwarded message — capture its original message_id and chat
-    if msg.forward_from_chat and msg.forward_from_message_id:
+    # Case 1: forwarded message — capture its original message_id and chat (PTB v21 uses forward_origin)
+    chat_id = None
+    msg_id = None
+
+    if hasattr(msg, "forward_origin") and msg.forward_origin:
+        origin = msg.forward_origin
+        if getattr(origin, "chat", None):
+            chat_id = origin.chat.id
+            msg_id = getattr(origin, "message_id", None)
+    elif getattr(msg, "forward_from_chat", None):
         chat_id = msg.forward_from_chat.id
-        msg_id  = msg.forward_from_message_id
+        msg_id  = getattr(msg, "forward_from_message_id", None)
+
+    if chat_id and msg_id:
         db.set("source_channel_id", chat_id)
         db.set("start_msg_id",      msg_id)
         db.set("current_msg_id",    msg_id)
@@ -465,6 +491,10 @@ async def cmd_setstart(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             "Use /resume to start the queue.",
             parse_mode=ParseMode.HTML,
         )
+        return
+
+    if getattr(msg, "forward_date", None) or getattr(msg, "forward_origin", None):
+        await msg.reply_text("❌ Could not read the source channel from this forward (likely cloaked by privacy settings). Please paste the t.me link instead.")
         return
 
     # Case 2: t.me link
