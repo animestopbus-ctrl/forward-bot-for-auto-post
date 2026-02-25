@@ -2,23 +2,14 @@
 main.py  –  Entry point for the Movie Publisher Bot
 ════════════════════════════════════════════════════════════════════════════
 
-Two independent flows run simultaneously:
+Scheduled queue flow
+─────────────────────
+Admin sets /setstart to a specific message_id.
+The scheduler job runs every <interval> seconds, fetches the
+message at current_msg_id from source, publishes it, increments ptr.
+This handles backfilling older posts.
 
-  A) Real-time flow
-     ──────────────
-     Bot is admin in source channel → receives channel_post updates.
-     handle_source_message() processes each media message immediately
-     (or queues it depending on interval setting).
-
-  B) Scheduled queue flow
-     ─────────────────────
-     Admin sets /setstart to a specific message_id.
-     The scheduler job runs every <interval> seconds, fetches the
-     message at current_msg_id from source, publishes it, increments ptr.
-     This handles backfilling older posts.
-
-Both flows produce identical output: zero-download Telegram copy with
-a rich HTML caption.
+This flow produces zero-download Telegram copy with a rich HTML caption.
 """
 
 from __future__ import annotations
@@ -62,30 +53,29 @@ for _noisy in ("httpx", "httpcore", "hachoir"):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Real-time source channel handler
+# Real-time source channel handler (Toggled via /autolive)
 # ─────────────────────────────────────────────────────────────────────────────
 
 async def handle_source_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
     Triggered for every media post in the source channel.
-
-    If the bot is in 'paused' state, the message is silently ignored.
-    Otherwise it is published immediately to the target channel.
-
-    Note: This handler fires for live messages arriving AFTER the bot
-    was added.  For historical messages, use /setstart + scheduler.
+    Only active if `auto_forward` is enabled via /autolive on.
     """
     cfg: Config   = context.bot_data["config"]
     db:  Database = context.bot_data["db"]
 
+    # 1. Master pauses
     if db.get_bool("paused", False):
+        return
+
+    # 2. Real-time toggle
+    if not db.get_bool("auto_forward", False):
         return
 
     msg = update.channel_post or update.message
     if msg is None:
         return
 
-    # Resolve source / target (DB overrides config defaults)
     src_raw = db.get("source_channel_id") or str(cfg.source_channel_id)
     tgt_raw = db.get("target_channel_id") or str(cfg.target_channel_id)
 
@@ -99,17 +89,27 @@ async def handle_source_message(update: Update, context: ContextTypes.DEFAULT_TY
     except (ValueError, TypeError):
         target_chat_id = None
 
-    # Only process messages from the configured source channel
     if source_chat_id and msg.chat_id != source_chat_id:
         return
     if not target_chat_id:
-        logger.warning("Target channel not set — ignoring message %d", msg.message_id)
         return
 
-    # Skip already-posted messages (can happen if bot restarts mid-session)
     if db.was_posted(msg.chat_id, msg.message_id):
-        logger.debug("msg %d already posted, skipping.", msg.message_id)
         return
+
+    # 3. Check Filters
+    banned_words = db.get_filters()
+    if banned_words:
+        from publisher import _extract_media
+        media_info = _extract_media(msg)
+        caption_text = (msg.caption or msg.text or "").lower()
+        file_name = (media_info[1] if media_info else "").lower()
+        search_str = f"{caption_text} {file_name}"
+
+        for word in banned_words:
+            if word in search_str:
+                logger.info("Real-time msg %d blocked by filter: '%s'", msg.message_id, word)
+                return
 
     custom_tag = db.get("custom_tag", "")
     extra_tags = [t for t in (db.get("extra_tags") or "").split("|||") if t]
@@ -198,18 +198,15 @@ def build_application(cfg: Config) -> Application:
     register_admin_handlers(app)
 
     # ── Real-time source channel listener ────────────────────────────────────
-    # Listen to both channel_post and forwarded messages (private/group sources)
     media_filter = (
         filters.VIDEO
         | filters.Document.ALL
         | filters.AUDIO
         | filters.ANIMATION
     )
-    # Channel posts
     app.add_handler(
         MessageHandler(filters.ChatType.CHANNEL & media_filter, handle_source_message)
     )
-    # Group / private messages (if source is a group or supergroup)
     app.add_handler(
         MessageHandler(
             (filters.ChatType.GROUP | filters.ChatType.SUPERGROUP) & media_filter,
