@@ -25,9 +25,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import sys
 from pathlib import Path
 
+from aiohttp import web
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.constants import ParseMode
@@ -131,8 +133,23 @@ async def handle_source_message(update: Update, context: ContextTypes.DEFAULT_TY
 # Post-init: start scheduler
 # ─────────────────────────────────────────────────────────────────────────────
 
+async def start_dummy_server() -> None:
+    """Starts a dummy aiohttp web server to satisfy Render's port binding requirement."""
+    app = web.Application()
+    app.router.add_get("/", lambda r: web.Response(text="Bot is running!"))
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = int(os.environ.get("PORT", "8080"))
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    logger.info("Dummy web server started on port %d", port)
+
+
 async def post_init(application: Application) -> None:
     """Called once after the Application is initialised."""
+    # Start the dummy web server as an asyncio task
+    application.create_task(start_dummy_server())
+
     db:  Database = application.bot_data["db"]
     cfg: Config   = application.bot_data["config"]
 
