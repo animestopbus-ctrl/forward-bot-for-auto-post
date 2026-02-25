@@ -158,15 +158,21 @@ def parse_tme_link(text: str) -> tuple[int, int] | None:
 # Dashboard keyboard
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _main_keyboard() -> InlineKeyboardMarkup:
+def _main_keyboard(db: Database) -> InlineKeyboardMarkup:
+    paused = db.get_bool("paused", False)
+    autolive = db.get_bool("auto_forward", False)
+
+    pause_btn = InlineKeyboardButton("▶️ Resume Queue", callback_data="cb_resume") if paused else InlineKeyboardButton("⏸ Pause Queue", callback_data="cb_pause")
+    autolive_btn = InlineKeyboardButton("🔴 AutoLive: OFF", callback_data="cb_autolive_toggle") if not autolive else InlineKeyboardButton("🟢 AutoLive: ON", callback_data="cb_autolive_toggle")
+
     return InlineKeyboardMarkup([
         [
             InlineKeyboardButton("📊 Status",    callback_data="cb_status"),
             InlineKeyboardButton("📈 Stats",     callback_data="cb_stats"),
         ],
         [
-            InlineKeyboardButton("▶️ Resume",    callback_data="cb_resume"),
-            InlineKeyboardButton("⏸ Pause",      callback_data="cb_pause"),
+            pause_btn,
+            autolive_btn,
         ],
         [
             InlineKeyboardButton("⏭ Skip Next",  callback_data="cb_skip"),
@@ -175,6 +181,7 @@ def _main_keyboard() -> InlineKeyboardMarkup:
         [
             InlineKeyboardButton("🔗 Channels",  callback_data="cb_channels"),
             InlineKeyboardButton("🏷 Tags",       callback_data="cb_tags"),
+            InlineKeyboardButton("🛡 Filters",    callback_data="cb_filters"),
         ],
         [
             InlineKeyboardButton("❓ Help",       callback_data="cb_help"),
@@ -192,6 +199,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     cfg: Config  = context.bot_data["config"]
 
     paused   = db.get_bool("paused", False)
+    autolive = db.get_bool("auto_forward", False)
     interval = db.get_int("interval_seconds", 600)
     src      = db.get("source_channel_id") or str(cfg.source_channel_id)
     tgt      = db.get("target_channel_id") or str(cfg.target_channel_id)
@@ -199,19 +207,22 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     posted   = db.total_posted()
 
     status_icon = "⏸ PAUSED" if paused else "▶️ RUNNING"
+    live_icon   = "🟢 ON" if autolive else "🔴 OFF"
 
     text = (
-        "🎬  <b>Movie Publisher Bot — Admin Panel</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"<b>Status   :</b>  {status_icon}\n"
-        f"<b>Source   :</b>  <code>{src}</code>\n"
-        f"<b>Target   :</b>  <code>{tgt}</code>\n"
-        f"<b>Interval :</b>  <code>{fmt_interval(interval)}</code>\n"
-        f"<b>Pointer  :</b>  msg_id <code>{ptr}</code>\n"
-        f"<b>Posted   :</b>  <code>{posted}</code> files\n\n"
-        "Use the buttons below or type /help for all commands."
+        "🎬  <b>Movie Publisher Bot — Admin Panel</b>\n\n"
+        "<blockquote>"
+        f"<b>Queue Status :</b>  {status_icon}\n"
+        f"<b>Auto-Live  :</b>  {live_icon}\n"
+        f"<b>Source     :</b>  <code>{src}</code>\n"
+        f"<b>Target     :</b>  <code>{tgt}</code>\n"
+        f"<b>Interval   :</b>  <code>{fmt_interval(interval)}</code>\n"
+        f"<b>Pointer    :</b>  msg_id <code>{ptr}</code>\n"
+        f"<b>Posted     :</b>  <code>{posted}</code> files"
+        "</blockquote>\n"
+        "<i>Use the buttons below to control the bot.</i>"
     )
-    await update.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=_main_keyboard())
+    await update.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=_main_keyboard(db))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -232,19 +243,24 @@ HELP_TEXT = (
     "   → Forward the message you want to start from\n"
     "   → Or paste its t.me link\n"
     "/interval 10m  — Post every 10 minutes\n"
-    "/interval 2h   — Post every 2 hours\n"
-    "/interval 30s  — Post every 30 seconds\n"
-    "/pause      — Pause posting\n"
-    "/resume     — Resume posting\n"
+    "/pause      — Pause queue posting\n"
+    "/resume     — Resume queue posting\n"
     "/skipnext   — Skip the next queued message\n"
     "/queue      — Show queue status\n"
     "/testpost   — Force-post now (ignore interval)\n\n"
+    "<b>Live Auto-Forwarding</b>\n"
+    "/autolive on   — Enable instant posting of new channel messages\n"
+    "/autolive off  — Disable instant posting (queue only)\n\n"
     "<b>Caption & Tags</b>\n"
     "/settag ⚡ Powered by @Chan  — Set footer tag\n"
     "/cleartag   — Remove footer tag\n"
-    "/addtag &lt;text&gt;   — Add extra tag line\n"
-    "/removetag &lt;text&gt;— Remove a tag line\n"
+    "/addtag <text>   — Add extra tag line\n"
+    "/removetag <text>— Remove a tag line\n"
     "/tags       — List all tags\n\n"
+    "<b>Filters</b>\n"
+    "/addfilter <word>  — Block messages containing this word\n"
+    "/removefilter <word> — Unblock a word\n"
+    "/filters    — List all active filters\n\n"
     "<b>Admin Management</b>\n"
     "/addadmin 123456   — Grant admin\n"
     "/removeadmin 123456— Revoke admin\n"
@@ -270,6 +286,7 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     cfg: Config   = context.bot_data["config"]
 
     paused   = db.get_bool("paused", False)
+    autolive = db.get_bool("auto_forward", False)
     interval = db.get_int("interval_seconds", 600)
     src      = db.get("source_channel_id") or str(cfg.source_channel_id)
     tgt      = db.get("target_channel_id") or str(cfg.target_channel_id)
@@ -279,14 +296,17 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     last     = db.last_post_time() or "Never"
     tag      = db.get("custom_tag", "")
     extra    = [t for t in (db.get("extra_tags") or "").split("|||") if t]
+    filters_lst = db.get_filters()
 
     tag_display  = tag if tag else "<i>none</i>"
     extra_display = "\n".join(f"  • {t}" for t in extra) if extra else "  <i>none</i>"
+    filter_display = "\n".join(f"  • {f}" for f in filters_lst) if filters_lst else "  <i>none</i>"
 
     text = (
-        "📊  <b>Full Bot Status</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"<b>State      :</b> {'⏸ PAUSED' if paused else '▶️ RUNNING'}\n"
+        "📊  <b>Full Bot Status</b>\n\n"
+        "<blockquote>"
+        f"<b>Queue State:</b> {'⏸ PAUSED' if paused else '▶️ RUNNING'}\n"
+        f"<b>Auto-Live  :</b> {'🟢 ON' if autolive else '🔴 OFF'}\n"
         f"<b>Source     :</b> <code>{src}</code>\n"
         f"<b>Target     :</b> <code>{tgt}</code>\n"
         f"<b>Interval   :</b> <code>{fmt_interval(interval)}</code>\n"
@@ -294,8 +314,10 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         f"<b>Current ptr:</b> <code>{ptr}</code>\n"
         f"<b>Total posts:</b> <code>{posted}</code>\n"
         f"<b>Last post  :</b> <code>{last}</code>\n"
+        f"<b>Active Fltrs:</b> {len(filters_lst)}\n"
         f"<b>Footer tag :</b> {tag_display}\n"
-        f"<b>Extra tags :</b>\n{extra_display}\n"
+        f"<b>Extra tags :</b>\n{extra_display}"
+        "</blockquote>"
     )
     await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
@@ -318,13 +340,14 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         daily = weekly = 0
 
     text = (
-        "📈  <b>Posting Statistics</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "📈  <b>Posting Statistics</b>\n\n"
+        "<blockquote>"
         f"<b>Total posted   :</b> <code>{posted}</code>\n"
         f"<b>Last post      :</b> <code>{last}</code>\n"
         f"<b>Current interval:</b> <code>{fmt_interval(interval)}</code>\n"
         f"<b>Estimated/day  :</b> <code>~{daily}</code>\n"
-        f"<b>Estimated/week :</b> <code>~{weekly}</code>\n"
+        f"<b>Estimated/week :</b> <code>~{weekly}</code>"
+        "</blockquote>"
     )
     await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
@@ -497,7 +520,7 @@ async def cmd_setstart(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await msg.reply_text("❌ Could not read the source channel from this forward (likely cloaked by privacy settings). Please paste the t.me link instead.")
         return
 
-    # Case 2: t.me link
+    # Case 2: t.me link or raw msg ID
     raw = " ".join(context.args or []).strip()
     if not raw:
         raw = (msg.text or "").replace("/setstart", "").strip()
@@ -518,6 +541,19 @@ async def cmd_setstart(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             )
             return
 
+    if raw.isdigit():
+        msg_id = int(raw)
+        chat_id = db.get("source_channel_id")
+        if chat_id:
+            db.set("start_msg_id", msg_id)
+            db.set("current_msg_id", msg_id)
+            await msg.reply_text(
+                f"✅  Start message ID set to <code>{msg_id}</code>!\n\n"
+                "Use /resume to start.",
+                parse_mode=ParseMode.HTML,
+            )
+            return
+
     await msg.reply_text(
         "📌  <b>How to set a start message:</b>\n\n"
         "Option 1 — Forward the message:\n"
@@ -525,7 +561,9 @@ async def cmd_setstart(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "  to start from, and <b>forward it to this bot</b>.\n\n"
         "Option 2 — Paste the t.me link:\n"
         "  /setstart https://t.me/c/1234567890/99\n"
-        "  /setstart https://t.me/ChannelName/99",
+        "  /setstart https://t.me/ChannelName/99\n\n"
+        "Option 3 — Paste the message ID directly (if source channel is set):\n"
+        "  /setstart 99",
         parse_mode=ParseMode.HTML,
     )
 
@@ -573,7 +611,7 @@ async def cmd_interval(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         jq.run_repeating(
             _publisher_job_callback,
             interval=seconds,
-            first=seconds,
+            first=5, # start in 5 seconds to give immediate feedback
             name="publisher_job",
         )
 
@@ -584,14 +622,18 @@ async def cmd_interval(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# /pause  /resume
+# /pause  /resume  /autolive
 # ─────────────────────────────────────────────────────────────────────────────
 
 @_admin_only
 async def cmd_pause(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     db: Database = context.bot_data["db"]
     db.set("paused", "true")
-    await update.message.reply_text("⏸  Bot paused. Posts will not be sent until /resume.")
+    text = "⏸  Bot paused. Posts will not be sent until /resume."
+    if update.callback_query:
+        await update.callback_query.message.edit_text(text, reply_markup=_main_keyboard(db))
+    else:
+        await update.message.reply_text(text)
 
 
 @_admin_only
@@ -600,7 +642,47 @@ async def cmd_resume(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     db.set("paused", "false")
     # Ensure the scheduler job is running
     _ensure_job(context)
-    await update.message.reply_text("▶️  Bot resumed! Next post in the scheduled interval.")
+    text = "▶️  Bot resumed! Next post in the scheduled interval."
+    if update.callback_query:
+        await update.callback_query.message.edit_text(text, reply_markup=_main_keyboard(db))
+    else:
+        await update.message.reply_text(text)
+
+
+@_admin_only
+async def cmd_autolive(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    db: Database = context.bot_data["db"]
+    raw = " ".join(context.args or []).strip().lower()
+
+    if raw == "on":
+        db.set("auto_forward", "true")
+        await update.message.reply_text("🟢  <b>Auto-Live:</b> ON\n\nNew messages posted to the source channel will now be forwarded immediately.", parse_mode=ParseMode.HTML)
+    elif raw == "off":
+        db.set("auto_forward", "false")
+        await update.message.reply_text("🔴  <b>Auto-Live:</b> OFF\n\nThe bot will now <i>only</i> post from the queue scheduler (/setstart).", parse_mode=ParseMode.HTML)
+    else:
+        state = "🟢 ON" if db.get_bool("auto_forward", False) else "🔴 OFF"
+        await update.message.reply_text(
+            f"<b>Auto-Live Status:</b> {state}\n\n"
+            "Use <code>/autolive on</code> to instantly forward new posts.\n"
+            "Use <code>/autolive off</code> to disable this and only use the scheduled queue.",
+            parse_mode=ParseMode.HTML
+        )
+
+@_admin_only
+async def cmd_autolive_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    db: Database = context.bot_data["db"]
+    current = db.get_bool("auto_forward", False)
+    new_state = not current
+    db.set("auto_forward", "true" if new_state else "false")
+    
+    state_str = "🟢 ON" if new_state else "🔴 OFF"
+    text = f"<b>Auto-Live toggled to:</b> {state_str}"
+    
+    if update.callback_query:
+        await update.callback_query.message.edit_text(text, parse_mode=ParseMode.HTML, reply_markup=_main_keyboard(db))
+    else:
+        await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -622,13 +704,14 @@ async def cmd_queue(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         next_str = "N/A"
 
     text = (
-        "🗂  <b>Queue Status</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "🗂  <b>Queue Status</b>\n\n"
+        "<blockquote>"
         f"<b>State       :</b> {'⏸ Paused' if paused else '▶️ Running'}\n"
         f"<b>Start msg   :</b> <code>{start_id}</code>\n"
         f"<b>Current ptr :</b> <code>{ptr}</code> (next to post)\n"
         f"<b>Interval    :</b> <code>{fmt_interval(interval)}</code>\n"
-        f"<b>Next post ~  :</b> <code>{next_str}</code>\n"
+        f"<b>Next post ~  :</b> <code>{next_str}</code>"
+        "</blockquote>"
     )
     await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
@@ -726,6 +809,43 @@ async def cmd_tags(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Filter commands
+# ─────────────────────────────────────────────────────────────────────────────
+
+@_admin_only
+async def cmd_addfilter(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    db: Database = context.bot_data["db"]
+    raw = " ".join(context.args or []).strip().lower()
+    if not raw:
+        await update.message.reply_text("Usage: /addfilter <keyword or phrase>", parse_mode=ParseMode.HTML)
+        return
+    db.add_filter(raw)
+    await update.message.reply_text(f"✅  Filter added. Messages containing <code>{raw}</code> will be ignored.", parse_mode=ParseMode.HTML)
+
+
+@_admin_only
+async def cmd_removefilter(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    db: Database = context.bot_data["db"]
+    raw = " ".join(context.args or []).strip().lower()
+    if not raw:
+        await update.message.reply_text("Usage: /removefilter <keyword>", parse_mode=ParseMode.HTML)
+        return
+    db.remove_filter(raw)
+    await update.message.reply_text(f"🗑  Filter removed: <code>{raw}</code>", parse_mode=ParseMode.HTML)
+
+
+@_admin_only
+async def cmd_filters(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    db: Database = context.bot_data["db"]
+    banned = db.get_filters()
+    banned_str = "\n".join(f"  • <code>{f}</code>" for f in banned) if banned else "  <i>none</i>"
+    await update.message.reply_text(
+        f"🛡  <b>Active Banned Keywords</b>\n\n{banned_str}\n\nAny message containing these words in their caption or filename will NOT be forwarded.",
+        parse_mode=ParseMode.HTML,
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Admin management
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -779,10 +899,12 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         "cb_stats":    cmd_stats,
         "cb_resume":   cmd_resume,
         "cb_pause":    cmd_pause,
+        "cb_autolive_toggle": cmd_autolive_toggle,
         "cb_skip":     cmd_skipnext,
         "cb_testpost": cmd_testpost,
         "cb_channels": cmd_channels,
         "cb_tags":     cmd_tags,
+        "cb_filters":  cmd_filters,
         "cb_help":     cmd_help,
     }
     fn = handlers.get(data)
@@ -834,6 +956,41 @@ async def _publisher_job_callback(context: ContextTypes.DEFAULT_TYPE) -> None:
         logger.info("msg_id %d already posted, advancing pointer.", ptr)
         db.set("current_msg_id", ptr + 1)
         return
+
+    # Check filters before doing anything heavy
+    msg = None
+    try:
+        msg = await context.bot.forward_message(
+            chat_id=context.bot.id, # forward to self to inspect
+            from_chat_id=source_chat_id,
+            message_id=ptr,
+            disable_notification=True,
+        )
+    except Exception as e:
+        logger.warning(f"Failed to pre-fetch message {ptr} for filter check: {e}")
+
+    if msg:
+        from publisher import _extract_media
+        media_info = _extract_media(msg)
+        caption_text = (msg.caption or msg.text or "").lower()
+        file_name = (media_info[1] if media_info else "").lower()
+        search_str = f"{caption_text} {file_name}"
+        
+        banned_words = db.get_filters()
+        for word in banned_words:
+            if word in search_str:
+                logger.info("msg_id %d blocked by filter: '%s', advancing pointer.", ptr, word)
+                db.set("current_msg_id", ptr + 1)
+                try:
+                    await msg.delete()
+                except:
+                    pass
+                return
+
+        try:
+            await msg.delete()
+        except:
+            pass
 
     custom_tag  = db.get("custom_tag", "")
     extra_raw   = db.get("extra_tags", "")
@@ -894,12 +1051,14 @@ def register_admin_handlers(app) -> None:
         ("status",      cmd_status),
         ("stats",       cmd_stats),
         ("setsource",   cmd_setsource),
+        ("setchannel",  cmd_setsource), # Alias
         ("settarget",   cmd_settarget),
         ("channels",    cmd_channels),
         ("setstart",    cmd_setstart),
         ("interval",    cmd_interval),
         ("pause",       cmd_pause),
         ("resume",      cmd_resume),
+        ("autolive",    cmd_autolive),
         ("skipnext",    cmd_skipnext),
         ("testpost",    cmd_testpost),
         ("queue",       cmd_queue),
@@ -908,6 +1067,9 @@ def register_admin_handlers(app) -> None:
         ("addtag",      cmd_addtag),
         ("removetag",   cmd_removetag),
         ("tags",        cmd_tags),
+        ("addfilter",   cmd_addfilter),
+        ("removefilter",cmd_removefilter),
+        ("filters",     cmd_filters),
         ("addadmin",    cmd_addadmin),
         ("removeadmin", cmd_removeadmin),
         ("admins",      cmd_admins),
