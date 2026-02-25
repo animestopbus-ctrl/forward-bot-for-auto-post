@@ -23,6 +23,7 @@ a rich HTML caption.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import sys
 from pathlib import Path
@@ -208,6 +209,16 @@ def build_application(cfg: Config) -> Application:
 
 def main() -> None:
     load_dotenv()
+
+    # Pre-initialize asyncio event loop to prevent RuntimeError in ptb on Python 3.12/3.14+
+    try:
+        asyncio.get_event_loop()
+    except RuntimeError:
+        asyncio.set_event_loop(asyncio.new_event_loop())
+
+    if sys.platform.lower().startswith("win"):
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
     cfg = load_config()
     app = build_application(cfg)
 
