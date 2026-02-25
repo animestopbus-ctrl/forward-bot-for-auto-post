@@ -18,9 +18,9 @@ Add TMDB/OMDb keys for even richer movie metadata.
 """
 
 import os
+import re
 from dataclasses import dataclass, field
 from typing import List
-
 
 @dataclass(frozen=True)
 class Config:
@@ -66,10 +66,8 @@ def load_config() -> Config:
         return os.environ.get(key, default).strip()
 
     raw_admins = opt("ADMIN_IDS", "")
-    admin_ids: List[int] = (
-        [int(x.strip()) for x in raw_admins.split(",") if x.strip().lstrip("-").isdigit()]
-        if raw_admins else []
-    )
+    # Use regex to extract all numbers, allowing various formats like "123, 456", "[123, 456]", "123 456"
+    admin_ids: List[int] = [int(x) for x in re.findall(r'-?\d+', raw_admins)]
 
     return Config(
         bot_token=require("BOT_TOKEN"),
@@ -82,5 +80,4 @@ def load_config() -> Config:
         channel_link=opt("CHANNEL_LINK", "https://t.me/THEUPDATEDGUYS"),
         api_timeout=int(opt("API_TIMEOUT", "10")),
         db_path=opt("DB_PATH", "bot_state.db"),
-
     )
